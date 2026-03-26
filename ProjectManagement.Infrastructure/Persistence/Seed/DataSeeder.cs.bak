@@ -1,0 +1,534 @@
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using ProjectManagement.Core.Constants;
+using ProjectManagement.Core.Entities;
+using ProjectManagement.Core.Enums;
+using TaskStatus = ProjectManagement.Core.Enums.TaskStatus;
+
+namespace ProjectManagement.Infrastructure.Persistence.Seed;
+
+public static class DataSeeder
+{
+    public static async Task SeedAsync(IServiceProvider services)
+    {
+        using var scope = services.CreateScope();
+        var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<ApplicationRole>>();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Seed roles
+        await SeedRolesAsync(roleManager);
+
+        // Seed users
+        var admin = await SeedUsersAsync(userManager);
+
+        // Seed teams
+        var (alphaTeam, betaTeam) = await SeedTeamsAsync(context, admin);
+
+        // Seed projects
+        var (alphaProj, betaProj, archProj) = await SeedProjectsAsync(context, alphaTeam, betaTeam, admin);
+
+        // Seed sprints
+        var alphaSprints = await SeedSprintsAsync(context, alphaProj, betaProj, archProj);
+
+        // Seed labels
+        var alphaLabels = await SeedLabelsAsync(context, alphaProj, betaProj);
+
+        // Seed tasks
+        var alphaTasks = await SeedTasksAsync(context, alphaProj, betaProj, alphaSprints, admin);
+
+        // Seed comments
+        await SeedCommentsAsync(context, alphaTasks, admin);
+
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task SeedRolesAsync(RoleManager<ApplicationRole> roleManager)
+    {
+        var roles = new[] { Roles.Admin, Roles.Manager, Roles.Developer };
+        foreach (var role in roles)
+        {
+            if (!await roleManager.RoleExistsAsync(role))
+                await roleManager.CreateAsync(new ApplicationRole { Name = role });
+        }
+    }
+
+    private static async Task<ApplicationUser> SeedUsersAsync(UserManager<ApplicationUser> userManager)
+    {
+        ApplicationUser? admin = null;
+
+        // Admin user
+        var adminEmail = "admin@pm.local";
+        if (await userManager.FindByEmailAsync(adminEmail) == null)
+        {
+            admin = new ApplicationUser
+            {
+                UserName = adminEmail,
+                Email = adminEmail,
+                FirstName = "Admin",
+                LastName = "User",
+                EmailConfirmed = true,
+                IsActive = true
+            };
+            await userManager.CreateAsync(admin, "Admin@123");
+            await userManager.AddToRoleAsync(admin, Roles.Admin);
+        }
+        else
+        {
+            admin = await userManager.FindByEmailAsync(adminEmail);
+        }
+
+        // Manager 1
+        var manager1Email = "manager1@pm.local";
+        if (await userManager.FindByEmailAsync(manager1Email) == null)
+        {
+            var manager1 = new ApplicationUser
+            {
+                UserName = manager1Email,
+                Email = manager1Email,
+                FirstName = "John",
+                LastName = "Manager",
+                EmailConfirmed = true,
+                IsActive = true
+            };
+            await userManager.CreateAsync(manager1, "Manager@123");
+            await userManager.AddToRoleAsync(manager1, Roles.Manager);
+        }
+
+        // Manager 2
+        var manager2Email = "manager2@pm.local";
+        if (await userManager.FindByEmailAsync(manager2Email) == null)
+        {
+            var manager2 = new ApplicationUser
+            {
+                UserName = manager2Email,
+                Email = manager2Email,
+                FirstName = "Jane",
+                LastName = "Manager",
+                EmailConfirmed = true,
+                IsActive = true
+            };
+            await userManager.CreateAsync(manager2, "Manager@123");
+            await userManager.AddToRoleAsync(manager2, Roles.Manager);
+        }
+
+        // Developers
+        for (int i = 1; i <= 5; i++)
+        {
+            var devEmail = $"dev{i}@pm.local";
+            if (await userManager.FindByEmailAsync(devEmail) == null)
+            {
+                var dev = new ApplicationUser
+                {
+                    UserName = devEmail,
+                    Email = devEmail,
+                    FirstName = $"Developer{i}",
+                    LastName = "User",
+                    EmailConfirmed = true,
+                    IsActive = true
+                };
+                await userManager.CreateAsync(dev, "Dev@123456");
+                await userManager.AddToRoleAsync(dev, Roles.Developer);
+            }
+        }
+
+        return admin!;
+    }
+
+    private static async Task<(Team alphaTeam, Team betaTeam)> SeedTeamsAsync(AppDbContext context, ApplicationUser admin)
+    {
+        Team? alphaTeam = null;
+        Team? betaTeam = null;
+
+        // Alpha Team
+        if (!context.Teams.Any(t => t.Name == "Alpha Team" && !t.IsDeleted))
+        {
+            alphaTeam = new Team
+            {
+                Id = Guid.NewGuid(),
+                Name = "Alpha Team",
+                Description = "The first development team",
+                CreatedByUserId = admin.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            await context.Teams.AddAsync(alphaTeam);
+        }
+        else
+        {
+            alphaTeam = context.Teams.FirstOrDefault(t => t.Name == "Alpha Team" && !t.IsDeleted);
+        }
+
+        // Beta Team
+        if (!context.Teams.Any(t => t.Name == "Beta Team" && !t.IsDeleted))
+        {
+            betaTeam = new Team
+            {
+                Id = Guid.NewGuid(),
+                Name = "Beta Team",
+                Description = "The second development team",
+                CreatedByUserId = admin.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            await context.Teams.AddAsync(betaTeam);
+        }
+        else
+        {
+            betaTeam = context.Teams.FirstOrDefault(t => t.Name == "Beta Team" && !t.IsDeleted);
+        }
+
+        // Seed team members
+        if (alphaTeam != null)
+        {
+            var alphaMembers = (await context.TeamMembers.Where(tm => tm.TeamId == alphaTeam.Id && !tm.IsDeleted).ToListAsync()).Count;
+            if (alphaMembers == 0)
+            {
+                var manager1 = await context.Users.FirstOrDefaultAsync(u => u.Email == "manager1@pm.local");
+                var dev1 = await context.Users.FirstOrDefaultAsync(u => u.Email == "dev1@pm.local");
+                var dev2 = await context.Users.FirstOrDefaultAsync(u => u.Email == "dev2@pm.local");
+
+                if (manager1 != null)
+                    await context.TeamMembers.AddAsync(new TeamMember
+                    {
+                        Id = Guid.NewGuid(),
+                        TeamId = alphaTeam.Id,
+                        UserId = manager1.Id,
+                        Role = TeamMemberRole.Owner.ToString(),
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    });
+
+                if (dev1 != null)
+                    await context.TeamMembers.AddAsync(new TeamMember
+                    {
+                        Id = Guid.NewGuid(),
+                        TeamId = alphaTeam.Id,
+                        UserId = dev1.Id,
+                        Role = TeamMemberRole.Member.ToString(),
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    });
+
+                if (dev2 != null)
+                    await context.TeamMembers.AddAsync(new TeamMember
+                    {
+                        Id = Guid.NewGuid(),
+                        TeamId = alphaTeam.Id,
+                        UserId = dev2.Id,
+                        Role = TeamMemberRole.Member.ToString(),
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    });
+            }
+        }
+
+        if (betaTeam != null)
+        {
+            var betaMembers = (await context.TeamMembers.Where(tm => tm.TeamId == betaTeam.Id && !tm.IsDeleted).ToListAsync()).Count;
+            if (betaMembers == 0)
+            {
+                var manager2 = await context.Users.FirstOrDefaultAsync(u => u.Email == "manager2@pm.local");
+                var dev3 = await context.Users.FirstOrDefaultAsync(u => u.Email == "dev3@pm.local");
+                var dev4 = await context.Users.FirstOrDefaultAsync(u => u.Email == "dev4@pm.local");
+
+                if (manager2 != null)
+                    await context.TeamMembers.AddAsync(new TeamMember
+                    {
+                        Id = Guid.NewGuid(),
+                        TeamId = betaTeam.Id,
+                        UserId = manager2.Id,
+                        Role = TeamMemberRole.Owner.ToString(),
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    });
+
+                if (dev3 != null)
+                    await context.TeamMembers.AddAsync(new TeamMember
+                    {
+                        Id = Guid.NewGuid(),
+                        TeamId = betaTeam.Id,
+                        UserId = dev3.Id,
+                        Role = TeamMemberRole.Member.ToString(),
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    });
+
+                if (dev4 != null)
+                    await context.TeamMembers.AddAsync(new TeamMember
+                    {
+                        Id = Guid.NewGuid(),
+                        TeamId = betaTeam.Id,
+                        UserId = dev4.Id,
+                        Role = TeamMemberRole.Member.ToString(),
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    });
+            }
+        }
+
+        return (alphaTeam!, betaTeam!);
+    }
+
+    private static async Task<(Project alphaPrj, Project betaPrj, Project archPrj)> SeedProjectsAsync(AppDbContext context, Team alphaTeam, Team betaTeam, ApplicationUser admin)
+    {
+        Project? alphaProj = null;
+        Project? betaProj = null;
+        Project? archProj = null;
+
+        // ALPH project in Alpha Team
+        if (!context.Projects.Any(p => p.Key == "ALPH" && !p.IsDeleted))
+        {
+            alphaProj = new Project
+            {
+                Id = Guid.NewGuid(),
+                TeamId = alphaTeam.Id,
+                Name = "Alpha Project",
+                Description = "The main alpha project",
+                Key = "ALPH",
+                Status = ProjectStatus.Active,
+                OwnerId = admin.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            await context.Projects.AddAsync(alphaProj);
+        }
+        else
+        {
+            alphaProj = context.Projects.FirstOrDefault(p => p.Key == "ALPH" && !p.IsDeleted);
+        }
+
+        // BETA project in Beta Team
+        if (!context.Projects.Any(p => p.Key == "BETA" && !p.IsDeleted))
+        {
+            betaProj = new Project
+            {
+                Id = Guid.NewGuid(),
+                TeamId = betaTeam.Id,
+                Name = "Beta Project",
+                Description = "The main beta project",
+                Key = "BETA",
+                Status = ProjectStatus.Active,
+                OwnerId = admin.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            await context.Projects.AddAsync(betaProj);
+        }
+        else
+        {
+            betaProj = context.Projects.FirstOrDefault(p => p.Key == "BETA" && !p.IsDeleted);
+        }
+
+        // ARCH project (archived) in Alpha Team
+        if (!context.Projects.Any(p => p.Key == "ARCH" && !p.IsDeleted))
+        {
+            archProj = new Project
+            {
+                Id = Guid.NewGuid(),
+                TeamId = alphaTeam.Id,
+                Name = "Archived Project",
+                Description = "An archived project for reference",
+                Key = "ARCH",
+                Status = ProjectStatus.Archived,
+                OwnerId = admin.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            await context.Projects.AddAsync(archProj);
+        }
+        else
+        {
+            archProj = context.Projects.FirstOrDefault(p => p.Key == "ARCH" && !p.IsDeleted);
+        }
+
+        return (alphaProj!, betaProj!, archProj!);
+    }
+
+    private static async Task<Dictionary<string, List<Sprint>>> SeedSprintsAsync(AppDbContext context, Project alphaProj, Project betaProj, Project archProj)
+    {
+        var sprints = new Dictionary<string, List<Sprint>>();
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var sprintDuration = 14; // 2 weeks
+
+        foreach (var proj in new[] { alphaProj, betaProj })
+        {
+            var key = proj.Key;
+            sprints[key] = new List<Sprint>();
+
+            // Completed sprint
+            if (!context.Sprints.Any(s => s.ProjectId == proj.Id && s.Status == SprintStatus.Completed))
+            {
+                var completedSprint = new Sprint
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = proj.Id,
+                    Name = $"{key} Sprint 1",
+                    StartDate = today.AddDays(-30),
+                    EndDate = today.AddDays(-16),
+                    Status = SprintStatus.Completed,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                await context.Sprints.AddAsync(completedSprint);
+                sprints[key].Add(completedSprint);
+            }
+
+            // Active sprint
+            if (!context.Sprints.Any(s => s.ProjectId == proj.Id && s.Status == SprintStatus.Active))
+            {
+                var activeSprint = new Sprint
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = proj.Id,
+                    Name = $"{key} Sprint 2",
+                    StartDate = today.AddDays(-15),
+                    EndDate = today.AddDays(sprintDuration - 15),
+                    Status = SprintStatus.Active,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                await context.Sprints.AddAsync(activeSprint);
+                sprints[key].Add(activeSprint);
+            }
+        }
+
+        return sprints;
+    }
+
+    private static async Task<Dictionary<string, List<Label>>> SeedLabelsAsync(AppDbContext context, Project alphaPrj, Project betaPrj)
+    {
+        var labels = new Dictionary<string, List<Label>>();
+        var labelNames = new[] { "Bug", "Feature", "Improvement", "Documentation" };
+        var labelColors = new[] { "#FF5733", "#33FF57", "#3357FF", "#FF33F1" };
+
+        foreach (var proj in new[] { alphaPrj, betaPrj })
+        {
+            labels[proj.Key] = new List<Label>();
+
+            for (int i = 0; i < labelNames.Length; i++)
+            {
+                if (!context.Labels.Any(l => l.ProjectId == proj.Id && l.Name == labelNames[i]))
+                {
+                    var label = new Label
+                    {
+                        Id = Guid.NewGuid(),
+                        ProjectId = proj.Id,
+                        Name = labelNames[i],
+                        Color = labelColors[i],
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    };
+                    await context.Labels.AddAsync(label);
+                    labels[proj.Key].Add(label);
+                }
+            }
+        }
+
+        return labels;
+    }
+
+    private static async Task<Dictionary<string, List<ProjectTask>>> SeedTasksAsync(AppDbContext context, Project alphaPrj, Project betaPrj, Dictionary<string, List<Sprint>> sprints, ApplicationUser admin)
+    {
+        var tasks = new Dictionary<string, List<ProjectTask>>();
+        var dev1 = await context.Users.FirstOrDefaultAsync(u => u.Email == "dev1@pm.local");
+        var dev2 = await context.Users.FirstOrDefaultAsync(u => u.Email == "dev2@pm.local");
+
+        var taskTitles = new[] { "Fix login bug", "Implement dashboard", "Add user search", "Optimize queries", "Update documentation", "Security audit" };
+        var statuses = new[] { TaskStatus.Backlog, TaskStatus.Todo, TaskStatus.InProgress, TaskStatus.InReview, TaskStatus.Done };
+        var priorities = new[] { TaskPriority.Low, TaskPriority.Medium, TaskPriority.High, TaskPriority.Critical };
+        var types = new[] { TaskType.Bug, TaskType.Epic, TaskType.Task, TaskType.Story };
+
+        foreach (var proj in new[] { alphaPrj, betaPrj })
+        {
+            tasks[proj.Key] = new List<ProjectTask>();
+            var projectSprints = sprints[proj.Key];
+            int orderIndex = 0;
+
+            for (int i = 0; i < 12; i++) // 12 tasks per project
+            {
+                var taskId = Guid.NewGuid();
+                var sprint = projectSprints[i % projectSprints.Count];
+                var assignee = i % 2 == 0 ? dev1 : dev2;
+
+                var task = new ProjectTask
+                {
+                    Id = taskId,
+                    ProjectId = proj.Id,
+                    SprintId = sprint.Id,
+                    Title = taskTitles[i % taskTitles.Length] + $" ({proj.Key}-{i + 1})",
+                    Description = $"This is a test task for {proj.Key}",
+                    Status = statuses[i % statuses.Length],
+                    Priority = priorities[i % priorities.Length],
+                    Type = types[i % types.Length],
+                    AssigneeId = assignee?.Id,
+                    ReporterId = admin.Id,
+                    StoryPoints = new[] { 1, 2, 3, 5, 8 }[i % 5],
+                    OrderIndex = orderIndex++,
+                    DueDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(i)),
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                await context.Tasks.AddAsync(task);
+                tasks[proj.Key].Add(task);
+            }
+        }
+
+        return tasks;
+    }
+
+    private static async Task SeedCommentsAsync(AppDbContext context, Dictionary<string, List<ProjectTask>> tasks, ApplicationUser admin)
+    {
+        var dev1 = await context.Users.FirstOrDefaultAsync(u => u.Email == "dev1@pm.local");
+
+        var commentTexts = new[] 
+        { 
+            "Let's review this thoroughly",
+            "Good progress @dev1",
+            "Need more details",
+            "Looks correct to me",
+            "Ready for testing"
+        };
+
+        foreach (var projectTasks in tasks.Values)
+        {
+            int commentIndex = 0;
+            foreach (var task in projectTasks.Take(5)) // Comments on first 5 tasks only
+            {
+                for (int i = 0; i < 2; i++) // 2 comments per task
+                {
+                    var comment = new Comment
+                    {
+                        Id = Guid.NewGuid(),
+                        TaskId = task.Id,
+                        Content = commentTexts[commentIndex % commentTexts.Length],
+                        AuthorId = i == 0 ? admin.Id : dev1?.Id ?? admin.Id,
+                        CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-(5 - i)),
+                        UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-(5 - i))
+                    };
+                    await context.Comments.AddAsync(comment);
+
+                    // Add a reply to the first comment
+                    if (i == 1)
+                    {
+                        var reply = new Comment
+                        {
+                            Id = Guid.NewGuid(),
+                            TaskId = task.Id,
+                            Content = "Thanks for the feedback!",
+                            AuthorId = dev1?.Id ?? admin.Id,
+                            ParentCommentId = comment.Id,
+                            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-(4 - i)),
+                            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-(4 - i))
+                        };
+                        await context.Comments.AddAsync(reply);
+                    }
+
+                    commentIndex++;
+                }
+            }
+        }
+    }
+}

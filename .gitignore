@@ -1,0 +1,91 @@
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio cache/options
+.vs/
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Resharper is a .NET coding assistant
+.idea/
+*.sln.iml
+
+# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build folder
+artifacts/
+publish/
+
+# Test Results
+TestResults/
+*.trx
+*.coverage
+
+# NuGet
+.nuget/
+*.nupkg
+*.snupkg
+*.symbols.nupkg
+
+# Database files
+*.mdf
+*.ldf
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Local environment
+.env
+.env.local
+appsettings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node modules (if using npm for any reason)
+node_modules/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Application insights
+ApplicationInsights.config
+
+# Local user secrets
+secrets.json
+secrets.dev.json
+
+# Rider
+.idea/
+*.sln.iml
+
+# Build Prompt Updates (documentation)
+BUILD_PROMPT_UPDATES.md
